@@ -1,150 +1,164 @@
-# Dotis - AI-Powered Telegram Issue Bot
+# Dotis
 
-Dotis automates the creation of GitHub issues from Telegram customer reports using AI classification and log analysis.
+Telegram'dan GitHub issue oluşturmak için basit bir bot. Yazılım ekipleri için tasarlandı.
 
-**Flow:** Customer sends `/bug` or `/istek` → AI classifies → logs fetched → issue drafted → user approves → GitHub issue created.
+## Nasıl Çalışır
 
-## Quick Start
+```
+/task HiTravelUI: Login hatası @emreylmz77
+→ ✅ Issue #5 oluşturuldu! (GitHub link)
+```
 
-### Prerequisites
-- Node.js 22+
-- Telegram bot token (from [@BotFather](https://t.me/BotFather))
-- OpenAI API key
+Tek komut, direkt issue. AI yok, onay yok, bekleme yok.
+
+## Komutlar
+
+| Komut | Açıklama | Örnek |
+|-------|----------|-------|
+| `/task` | Genel task | `/task HiTravelUI: Refactor gerekli @ahmet` |
+| `/bug` | Hata bildirimi | `/bug HiTravelCoApi: API timeout veriyor @emreylmz77` |
+| `/istek` | Özellik talebi | `/istek HiMobile: Dark mode eklensin` |
+
+### Format
+
+```
+/komut ProjeAdı: mesaj @telegramKullanıcıAdı
+```
+
+- **ProjeAdı** — `dotis.config.json`'daki proje adı
+- **mesaj** — Issue başlığı ve açıklaması
+- **@kullanıcı** — Sorumlu kişi (opsiyonel, yazmazsan kendine atanır)
+
+## Kurulum
+
+### Gereksinimler
+- Docker
+- Telegram bot token ([@BotFather](https://t.me/BotFather))
 - GitHub Personal Access Token
-- (Optional) Seq server for log lookup
 
-### Setup
+### 1. Clone
 
-1. **Clone and install**
-   ```bash
-   npm install
-   ```
+```bash
+git clone https://github.com/emreylmz7/Dotis.git
+cd Dotis
+```
 
-2. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your credentials
-   ```
+### 2. Proje ve Ekip Ayarları
 
-3. **Initialize database**
-   ```bash
-   npx prisma migrate dev
-   ```
+`dotis.config.json` dosyasını düzenle:
 
-4. **Start in development**
-   ```bash
-   npm run dev
-   ```
+```json
+{
+  "projects": [
+    {
+      "id": "hitravelui",
+      "name": "HiTravelUI",
+      "owner": "DotlantisDev",
+      "repo": "HiTravelUI",
+      "defaultLabels": ["from-telegram"]
+    }
+  ],
+  "teamMembers": [
+    {
+      "id": "emre",
+      "name": "Emre",
+      "telegramUsername": "emreylmz77",
+      "githubUsername": "emreylmz7"
+    }
+  ]
+}
+```
 
-## Scripts
+### 3. Environment Variables
 
-- `npm run dev` — Start bot with hot reload
-- `npm run build` — Compile TypeScript to `dist/`
-- `npm start` — Run compiled bot
-- `npm run db:migrate` — Create/update database schema
-- `npm run db:generate` — Generate Prisma client
+```bash
+cp .env.example .env
+```
 
-## Project Structure
+`.env` dosyasını düzenle:
+
+```env
+TELEGRAM_BOT_TOKEN=botfather_token
+ALLOWED_CHAT_IDS=-1001234567890
+GITHUB_TOKEN=ghp_xxx
+DATABASE_URL=file:./data/dotis.db
+```
+
+### 4. Başlat
+
+```bash
+docker compose up -d --build
+```
+
+Logları kontrol et:
+
+```bash
+docker compose logs -f dotis
+```
+
+## CI/CD
+
+`main` branch'e push yapınca GitHub Actions otomatik VPS'e deploy eder.
+
+### GitHub Secrets Gerekli
+
+| Secret | Açıklama |
+|--------|----------|
+| `VPS_HOST` | VPS IP adresi |
+| `VPS_USER` | SSH kullanıcısı |
+| `VPS_SSH_KEY` | SSH private key |
+
+## Proje/Kişi Güncelleme
+
+`dotis.config.json`'ı düzenle → push et → otomatik deploy.
+
+**Yeni proje ekle:**
+```json
+{
+  "id": "himobile",
+  "name": "HiMobile",
+  "owner": "DotlantisDev",
+  "repo": "HiMobile",
+  "defaultLabels": ["from-telegram"]
+}
+```
+
+**Yeni kişi ekle:**
+```json
+{
+  "id": "ahmet",
+  "name": "Ahmet",
+  "telegramUsername": "ahmet_dev",
+  "githubUsername": "ahmet-github"
+}
+```
+
+## Proje Yapısı
 
 ```
 src/
-├── index.ts                 # Entry point
-├── bot.ts                   # Telegram bot commands & callbacks
-├── config.ts                # Environment variable validation
-├── pipeline.ts              # AI workflow orchestrator
-├── services/
-│   ├── openai.ts           # Classification, duplicate check, drafting
-│   ├── seq.ts              # Log lookup from Seq server
-│   ├── github.ts           # GitHub issue creation
-│   └── telegram.ts         # Message formatting & sending
-├── prompts/
-│   ├── classification.ts   # Intent classification prompt
-│   └── issue-draft.ts      # Issue generation prompt
+├── index.ts           # Entry point
+├── bot.ts             # Telegram komut handler'ları
+├── config.ts          # Env + dotis.config.json okuma
 ├── db/
-│   ├── client.ts           # Prisma client singleton
-│   └── repository.ts       # Database CRUD operations
+│   ├── client.ts      # Prisma client
+│   └── repository.ts  # DB CRUD
+├── services/
+│   └── github.ts      # GitHub issue oluşturma
 └── types/
-    └── index.ts            # Shared TypeScript types
+    └── index.ts       # TypeScript tipleri
+
+dotis.config.json      # Proje ve ekip tanımları
 ```
 
-## How It Works
+## Teknolojiler
 
-### 1. Command Reception
-User sends `/bug <message>` or `/istek <message>` in an allowed Telegram group.
+- **Runtime:** Node.js 22 + TypeScript
+- **Bot:** grammy (long polling)
+- **GitHub:** @octokit/rest
+- **DB:** Prisma + SQLite
+- **Deploy:** Docker + GitHub Actions
 
-### 2. Classification
-OpenAI classifies intent (bug vs feature), extracts keywords, and estimates time range.
-
-### 3. Log Lookup (bugs only)
-Seq server searches for related error logs using extracted keywords and time range.
-
-### 4. Duplicate Detection
-Compares the issue summary to open GitHub issues to warn about duplicates.
-
-### 5. Draft Generation
-AI generates a professional GitHub issue with title, body, priority, and labels.
-
-### 6. User Approval
-Bot sends an inline keyboard:
-- **✅ Olustur** — Create the issue
-- **✏️ Duzenle** — Edit and regenerate
-- **❌ Iptal** — Cancel
-
-### 7. Issue Creation
-On approval, the issue is created on GitHub and the user is notified with the issue number.
-
-### 8. Timeout
-After 5 minutes of inactivity, pending approvals are auto-cancelled.
-
-## Status Machine
-
-```
-received → processing → awaiting_approval → completed
-              ↓              ↓
-            failed        cancelled
-```
-
-## Error Handling
-
-- **OpenAI errors** → Mark failed, notify user
-- **Seq unavailable** → Continue without logs (graceful degradation)
-- **GitHub errors** → Mark failed, notify user
-- **Duplicate Telegram updates** → Ignored via unique constraint
-
-## Database
-
-SQLite database with `TelegramMessage` table tracking:
-- User message and metadata
-- AI classification results
-- Seq logs snapshot
-- Draft issue JSON
-- Processing status and errors
-
-## Docker Deployment
-
-```bash
-docker-compose up -d --build
-docker-compose logs -f dotis
-```
-
-The bot runs long polling (not webhooks) and persists the SQLite database to `./data/`.
-
-## Configuration
-
-See `.env.example` for all required environment variables:
-
-- `TELEGRAM_BOT_TOKEN` — Bot token from BotFather
-- `ALLOWED_CHAT_IDS` — Comma-separated Telegram group IDs (silent ignore others)
-- `OPENAI_API_KEY` — OpenAI API key
-- `OPENAI_MODEL` — Model to use (default: `gpt-4o-mini`)
-- `SEQ_SERVER_URL` — Seq server URL (optional)
-- `SEQ_API_KEY` — Seq authentication (optional)
-- `GITHUB_TOKEN` — GitHub Personal Access Token
-- `GITHUB_OWNER` — GitHub org/user
-- `GITHUB_REPO` — Repository for issues
-- `GITHUB_DEFAULT_LABELS` — Default issue labels
-- `APPROVAL_TIMEOUT_MS` — Approval window (default: 5 minutes)
-
-## License
+## Lisans
 
 MIT
