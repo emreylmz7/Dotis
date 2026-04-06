@@ -1,0 +1,26 @@
+{
+  "projects": [
+    {
+      "id": "hitravelui",
+      "name": "HiTravelUI",
+      "owner": "emreylmz7",
+      "repo": "Portfolio",
+      "defaultLabels": ["from-telegram"]
+    },
+    {
+      "id": "hitravelcoapi",
+      "name": "HiTravelCoApi",
+      "owner": "emreylmz7",
+      "repo": "Portfolio",
+      "defaultLabels": ["from-telegram"]
+    }
+  ],
+  "teamMembers": [
+    {
+      "id": "emre",
+      "name": "Emre",
+      "telegramUsername": "emreylmz77",
+      "githubUsername": "emreylmz7"
+    }
+  ]
+}

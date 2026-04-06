@@ -1,0 +1,37 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model TelegramMessage {
+  id                      String    @id @default(uuid())
+  telegramMessageId       Int
+  chatId                  BigInt
+  chatTitle               String?
+  senderUserId            BigInt
+  senderUsername           String?
+  messageText             String
+  commandType             String
+  telegramDate            DateTime
+  projectId               String?
+  projectName             String?
+  assigneeGithubUsername  String?
+  assigneeName            String?
+  classifiedIntent        String?
+  confidence              Float?
+  extractedKeywords       String?
+  aiDraftJson             String?
+  status                  String    @default("received")
+  errorMessage            String?
+  retryCount              Int       @default(0)
+  issueNumber             Int?
+  issueUrl                String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@unique([telegramMessageId, chatId])
+}
