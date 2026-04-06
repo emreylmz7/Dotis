@@ -38,10 +38,6 @@ export const config = {
       .split(',')
       .map((s) => BigInt(s.trim())),
   },
-  openai: {
-    apiKey: required('OPENAI_API_KEY'),
-    model: optional('OPENAI_MODEL', 'gpt-4o-mini'),
-  },
   github: {
     token: required('GITHUB_TOKEN'),
   },
