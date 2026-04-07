@@ -70,7 +70,8 @@ bot.command('yeni', async (ctx) => {
   const keyboard = new InlineKeyboard()
     .text('📋 Task', `t:${pendingKey}:task`)
     .text('🐛 Bug', `t:${pendingKey}:bug`)
-    .text('💡 İstek', `t:${pendingKey}:feature`);
+    .text('💡 İstek', `t:${pendingKey}:feature`)
+    .row().text('❌ İptal', `x:${pendingKey}`);
 
   await ctx.reply('🏷️ Issue türünü seçin:', { reply_markup: keyboard });
 });
@@ -83,7 +84,8 @@ bot.hears('📝 Yeni Issue', async (ctx) => {
   const keyboard = new InlineKeyboard()
     .text('📋 Task', `t:${pendingKey}:task`)
     .text('🐛 Bug', `t:${pendingKey}:bug`)
-    .text('💡 İstek', `t:${pendingKey}:feature`);
+    .text('💡 İstek', `t:${pendingKey}:feature`)
+    .row().text('❌ İptal', `x:${pendingKey}`);
 
   await ctx.reply('🏷️ Issue türünü seçin:', { reply_markup: keyboard });
 });
@@ -109,6 +111,8 @@ bot.on('callback_query:data', async (ctx) => {
       if (i % 2 === 1) keyboard.row();
     });
 
+    keyboard.row().text('❌ İptal', `x:${pendingKey}`);
+
     const typeLabel = getTypeLabel(type!);
     await ctx.editMessageText(`🏷️ ${typeLabel}\n\n📁 Proje seçin:`, { parse_mode: 'HTML', reply_markup: keyboard });
     await ctx.answerCallbackQuery();
@@ -129,6 +133,7 @@ bot.on('callback_query:data', async (ctx) => {
       if (i % 2 === 1) keyboard.row();
     });
     keyboard.row().text('Kimseyi Atama', `a:${pendingKey}:none`);
+    keyboard.row().text('❌ İptal', `x:${pendingKey}`);
 
     await ctx.editMessageText(
       `🏷️ ${typeLabel}\n📁 ${project.name}\n\n👤 Kime atansın?`,
@@ -151,7 +156,7 @@ bot.on('callback_query:data', async (ctx) => {
 
     let summary = `🏷️ ${typeLabel}\n📁 ${project.name}\n`;
     if (assignee) summary += `👤 ${assignee.name}\n`;
-    summary += `\n✏️ Şimdi issue mesajınızı yazın:`;
+    summary += `\n✏️ Şimdi issue mesajınızı yazın (veya /iptal):`;
 
     await ctx.editMessageText(summary, { parse_mode: 'HTML' });
     await ctx.answerCallbackQuery();
@@ -159,6 +164,17 @@ bot.on('callback_query:data', async (ctx) => {
     // Wait for user's next text message
     const userKey = `${pending.chatId}:${pending.senderUserId}`;
     waitingForMessage.set(userKey, pendingKey!);
+
+  } else if (data.startsWith('x:')) {
+    // Cancel
+    const [, pendingKey] = data.split(':');
+    pendingIssues.delete(pendingKey!);
+    // Also clean up waitingForMessage if exists
+    for (const [key, val] of waitingForMessage) {
+      if (val === pendingKey) waitingForMessage.delete(key);
+    }
+    await ctx.editMessageText('🚫 İptal edildi.');
+    await ctx.answerCallbackQuery({ text: 'İptal edildi.' });
   }
 });
 
@@ -185,6 +201,13 @@ bot.on('message:text', async (ctx) => {
 
   const message = ctx.message.text.trim();
   if (!message) return;
+
+  // Cancel if user types /iptal
+  if (message === '/iptal') {
+    pendingIssues.delete(pendingKey);
+    await ctx.reply('🚫 İptal edildi.', { reply_to_message_id: ctx.message.message_id });
+    return;
+  }
 
   pending.message = message;
 
