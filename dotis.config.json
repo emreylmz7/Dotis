@@ -2,25 +2,85 @@
   "projects": [
     {
       "id": "hitravelui",
-      "name": "HiTravelUI",
-      "owner": "emreylmz7",
-      "repo": "Portfolio",
+      "name": "HiTravelCoUi",
+      "owner": "DotlantisDev",
+      "repo": "HiTravelCoUi",
       "defaultLabels": ["from-telegram"]
     },
     {
-      "id": "hitravelcoapi",
+      "id": "hitravelapi",
       "name": "HiTravelCoApi",
-      "owner": "emreylmz7",
-      "repo": "Portfolio",
+      "owner": "DotlantisDev",
+      "repo": "HiTravelCoApi",
+      "defaultLabels": ["from-telegram"]
+    },
+    {
+      "id": "hitravelpanel",
+      "name": "HiTravelCoPanel",
+      "owner": "DotlantisDev",
+      "repo": "HiTravelCoPanel",
+      "defaultLabels": ["from-telegram"]
+    },
+    {
+      "id": "hitravelextranet",
+      "name": "HiTravelCoExtranetPanel",
+      "owner": "DotlantisDev",
+      "repo": "HiTravelCoExtranetPanel",
+      "defaultLabels": ["from-telegram"]
+    },
+    {
+      "id": "pusulabackend",
+      "name": "PusulaBackend",
+      "owner": "DotlantisDev",
+      "repo": "PusulaBackend",
+      "defaultLabels": ["from-telegram"]
+    },
+    {
+      "id": "pusuladashboard",
+      "name": "PusulaDashboard",
+      "owner": "DotlantisDev",
+      "repo": "PusulaDashboard",
+      "defaultLabels": ["from-telegram"]
+    },
+    {
+      "id": "capitalistpanel",
+      "name": "CapitalistPanel",
+      "owner": "DotlantisDev",
+      "repo": "CapitalistPanel",
+      "defaultLabels": ["from-telegram"]
+    },
+    {
+      "id": "capitalistapi",
+      "name": "CapitalistAPI",
+      "owner": "DotlantisDev",
+      "repo": "CapitalistAPI",
       "defaultLabels": ["from-telegram"]
     }
   ],
   "teamMembers": [
     {
       "id": "emre",
-      "name": "Emre",
+      "name": "Emre Yilmaz",
       "telegramUsername": "emreylmz77",
       "githubUsername": "emreylmz7"
+    },
+    {
+      "id": "birgul",
+      "name": "Birgul Komur",
+      "telegramUsername": "berfkm",
+      "githubUsername": "bisafkm"
+    },
+    {
+      "id": "nefise",
+      "name": "Nefise Yildiz",
+      "telegramUsername": "nefiseyildiz",
+      "githubUsername": "nefise-yildiz"
+    },
+    {
+      "id": "ezgi",
+      "name": "Ezgi Kececi",
+      "telegramUsername": "ezgikececi",
+      "githubUsername": "EzgiKececi"
     }
   ]
 }
