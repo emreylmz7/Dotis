@@ -33,7 +33,7 @@ function isAllowedChat(chatId: bigint): boolean {
 }
 
 // Persistent reply keyboard
-const mainKeyboard = new Keyboard().text('📝 Yeni Issue').resized();
+const mainKeyboard = new Keyboard().text('📝 Yeni Issue').resized().persistent();
 
 // =====================
 // /start - Show persistent keyboard
