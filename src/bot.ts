@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, Keyboard } from 'grammy';
 import { config, dotisConfig } from './config.js';
 import * as repository from './db/repository.js';
 import { createIssue } from './services/github.js';
@@ -6,12 +6,14 @@ import type { CommandType } from './types/index.js';
 
 export const bot = new Bot(config.telegram.botToken);
 
-// Pending issue flows waiting for user selections
+// =====================
+// STATE
+// =====================
+
 interface PendingIssue {
   message: string;
-  commandType: CommandType;
+  commandType?: CommandType;
   projectId?: string;
-  assigneeId?: string;
   chatId: bigint;
   senderUserId: bigint;
   senderUsername: string | null;
@@ -23,89 +25,152 @@ interface PendingIssue {
 
 const pendingIssues = new Map<string, PendingIssue>();
 
+// Users waiting to type a message (chatId:userId → true)
+const waitingForMessage = new Map<string, boolean>();
+
 function isAllowedChat(chatId: bigint): boolean {
   return config.telegram.allowedChatIds.includes(chatId);
 }
 
+// Persistent reply keyboard
+const mainKeyboard = new Keyboard().text('📝 Yeni Issue').resized();
+
 // =====================
-// COMMANDS
+// /start - Show persistent keyboard
 // =====================
 
-bot.command(['task', 'bug', 'istek'], async (ctx) => {
+bot.command('start', async (ctx) => {
   const chatId = BigInt(ctx.chat.id);
   if (!isAllowedChat(chatId)) return;
 
-  const raw = (ctx.match ?? '').trim();
-  if (!raw) {
-    await ctx.reply(
-      '⚠️ Kullanım:\n<code>/task mesajınız</code>\n<code>/bug mesajınız</code>\n<code>/istek mesajınız</code>\n\nÖrnek:\n<code>/task Login hatası düzeltilecek</code>',
-      { parse_mode: 'HTML' }
-    );
-    return;
-  }
+  await ctx.reply(
+    '👋 <b>Dotis Bot</b> hazır!\n\nAşağıdaki butonu kullanarak issue oluşturabilirsiniz.',
+    { parse_mode: 'HTML', reply_markup: mainKeyboard }
+  );
+});
 
-  // Determine command type
-  const cmd = ctx.msg.text?.split(' ')[0] ?? '/task';
-  let commandType: CommandType = 'bug';
-  if (cmd === '/bug') commandType = 'bug';
-  else if (cmd === '/istek') commandType = 'feature';
+// =====================
+// "Yeni Issue" button tap
+// =====================
+
+bot.hears('📝 Yeni Issue', async (ctx) => {
+  const chatId = BigInt(ctx.chat.id);
+  if (!isAllowedChat(chatId)) return;
+
+  const userKey = `${chatId}:${ctx.from?.id}`;
+  waitingForMessage.set(userKey, true);
+
+  await ctx.reply('✏️ Issue mesajınızı yazın:', { reply_markup: mainKeyboard });
+});
+
+// =====================
+// Catch typed message (after "Yeni Issue" tap)
+// =====================
+
+bot.on('message:text', async (ctx) => {
+  const chatId = BigInt(ctx.chat.id);
+  if (!isAllowedChat(chatId)) return;
+
+  const userKey = `${chatId}:${ctx.from?.id}`;
+  if (!waitingForMessage.get(userKey)) return;
+
+  waitingForMessage.delete(userKey);
+
+  const message = ctx.message.text.trim();
+  if (!message) return;
 
   // Save to DB
   const dbRecord = await repository.createMessage({
-    telegramMessageId: ctx.message?.message_id ?? 0,
+    telegramMessageId: ctx.message.message_id,
     chatId,
     chatTitle: ctx.chat.title ?? null,
-    senderUserId: BigInt(ctx.from?.id ?? 0),
-    senderUsername: ctx.from?.username ?? null,
-    messageText: raw,
-    commandType,
-    telegramDate: new Date((ctx.message?.date ?? 0) * 1000),
+    senderUserId: BigInt(ctx.from.id),
+    senderUsername: ctx.from.username ?? null,
+    messageText: message,
+    commandType: 'bug', // temporary
+    telegramDate: new Date(ctx.message.date * 1000),
   });
 
   const pendingKey = dbRecord.id;
   pendingIssues.set(pendingKey, {
-    message: raw,
-    commandType,
+    message,
     chatId,
-    senderUserId: BigInt(ctx.from?.id ?? 0),
-    senderUsername: ctx.from?.username ?? null,
-    telegramDate: new Date((ctx.message?.date ?? 0) * 1000),
-    messageId: ctx.message?.message_id ?? 0,
+    senderUserId: BigInt(ctx.from.id),
+    senderUsername: ctx.from.username ?? null,
+    telegramDate: new Date(ctx.message.date * 1000),
+    messageId: ctx.message.message_id,
     chatTitle: ctx.chat.title ?? null,
     dbId: dbRecord.id,
   });
 
-  // Show project selection
-  await sendProjectSelection(ctx, pendingKey, raw);
+  // Step 1: Type selection
+  const keyboard = new InlineKeyboard()
+    .text('📋 Task', `t:${pendingKey}:task`)
+    .text('🐛 Bug', `t:${pendingKey}:bug`)
+    .text('💡 İstek', `t:${pendingKey}:feature`);
+
+  await ctx.reply(
+    `📝 <b>${escapeHtml(message)}</b>\n\n🏷️ Tür seçin:`,
+    { parse_mode: 'HTML', reply_markup: keyboard, reply_to_message_id: ctx.message.message_id }
+  );
 });
 
 // =====================
-// CALLBACK HANDLERS
+// CALLBACK: Type → Project → Assignee
 // =====================
 
 bot.on('callback_query:data', async (ctx) => {
   const data = ctx.callbackQuery.data;
 
-  if (data.startsWith('p:')) {
-    // Project selected → show assignee selection
+  if (data.startsWith('t:')) {
+    // Type selected → show projects
+    const [, pendingKey, type] = data.split(':');
+    const pending = pendingIssues.get(pendingKey!);
+    if (!pending) return void await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı.' });
+
+    pending.commandType = type === 'bug' ? 'bug' : type === 'feature' ? 'feature' : 'bug';
+
+    const keyboard = new InlineKeyboard();
+    dotisConfig.projects.forEach((p, i) => {
+      keyboard.text(p.name, `p:${pendingKey}:${p.id}`);
+      if (i % 2 === 1) keyboard.row();
+    });
+
+    const typeLabel = type === 'bug' ? '🐛 Bug' : type === 'feature' ? '💡 İstek' : '📋 Task';
+    await ctx.editMessageText(
+      `📝 <b>${escapeHtml(pending.message)}</b>\n🏷️ ${typeLabel}\n\n📁 Proje seçin:`,
+      { parse_mode: 'HTML', reply_markup: keyboard }
+    );
+    await ctx.answerCallbackQuery();
+
+  } else if (data.startsWith('p:')) {
+    // Project selected → show assignees
     const [, pendingKey, projectId] = data.split(':');
     const pending = pendingIssues.get(pendingKey!);
-    if (!pending) {
-      await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı, tekrar deneyin.' });
-      return;
-    }
+    if (!pending) return void await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı.' });
 
     pending.projectId = projectId;
-    await sendAssigneeSelection(ctx, pendingKey!);
+    const project = dotisConfig.projects.find((p) => p.id === projectId)!;
+    const typeLabel = pending.commandType === 'bug' ? '🐛 Bug' : pending.commandType === 'feature' ? '💡 İstek' : '📋 Task';
+
+    const keyboard = new InlineKeyboard();
+    dotisConfig.teamMembers.forEach((m, i) => {
+      keyboard.text(m.name, `a:${pendingKey}:${m.id}`);
+      if (i % 2 === 1) keyboard.row();
+    });
+    keyboard.row().text('Kimseyi Atama', `a:${pendingKey}:none`);
+
+    await ctx.editMessageText(
+      `📝 <b>${escapeHtml(pending.message)}</b>\n🏷️ ${typeLabel}\n📁 ${project.name}\n\n👤 Kime atansın?`,
+      { parse_mode: 'HTML', reply_markup: keyboard }
+    );
     await ctx.answerCallbackQuery();
+
   } else if (data.startsWith('a:')) {
     // Assignee selected → create issue
     const [, pendingKey, assigneeId] = data.split(':');
     const pending = pendingIssues.get(pendingKey!);
-    if (!pending) {
-      await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı, tekrar deneyin.' });
-      return;
-    }
+    if (!pending) return void await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı.' });
 
     pending.assigneeId = assigneeId === 'none' ? undefined : assigneeId;
     pendingIssues.delete(pendingKey!);
@@ -116,48 +181,11 @@ bot.on('callback_query:data', async (ctx) => {
 });
 
 // =====================
-// UI BUILDERS
-// =====================
-
-async function sendProjectSelection(ctx: any, pendingKey: string, message: string) {
-  const keyboard = new InlineKeyboard();
-  dotisConfig.projects.forEach((p, i) => {
-    keyboard.text(p.name, `p:${pendingKey}:${p.id}`);
-    if (i % 2 === 1) keyboard.row();
-  });
-
-  const text = `📝 <b>${escapeHtml(message)}</b>\n\n📁 Proje seçin:`;
-  const opts: Record<string, unknown> = { parse_mode: 'HTML', reply_markup: keyboard };
-  if (ctx.message?.message_id) opts.reply_to_message_id = ctx.message.message_id;
-  await ctx.reply(text, opts as any);
-}
-
-async function sendAssigneeSelection(ctx: any, pendingKey: string) {
-  const pending = pendingIssues.get(pendingKey)!;
-  const project = dotisConfig.projects.find((p) => p.id === pending.projectId)!;
-
-  const keyboard = new InlineKeyboard();
-  dotisConfig.teamMembers.forEach((m, i) => {
-    keyboard.text(m.name, `a:${pendingKey}:${m.id}`);
-    if (i % 2 === 1) keyboard.row();
-  });
-  keyboard.row().text('Kimseyi Atama', `a:${pendingKey}:none`);
-
-  const text =
-    `📝 <b>${escapeHtml(pending.message)}</b>\n` +
-    `📁 ${project.name}\n\n` +
-    `👤 Kime atansın?`;
-
-  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard });
-}
-
-// =====================
 // ISSUE CREATION
 // =====================
 
-async function createIssueFromPending(ctx: any, pending: PendingIssue) {
+async function createIssueFromPending(ctx: any, pending: PendingIssue & { assigneeId?: string }) {
   const project = dotisConfig.projects.find((p) => p.id === pending.projectId)!;
-
   const assignee = pending.assigneeId
     ? dotisConfig.teamMembers.find((m) => m.id === pending.assigneeId)
     : undefined;
@@ -166,7 +194,8 @@ async function createIssueFromPending(ctx: any, pending: PendingIssue) {
   if (pending.commandType === 'bug') titlePrefix = '[Hata]';
   else if (pending.commandType === 'feature') titlePrefix = '[Özellik]';
 
-  // Update DB
+  const typeLabel = pending.commandType === 'bug' ? '🐛 Bug' : pending.commandType === 'feature' ? '💡 İstek' : '📋 Task';
+
   const extra: Record<string, string> = { projectId: project.id, projectName: project.name };
   if (assignee) {
     extra.assigneeGithubUsername = assignee.githubUsername;
@@ -176,12 +205,7 @@ async function createIssueFromPending(ctx: any, pending: PendingIssue) {
 
   try {
     const issue = await createIssue(
-      {
-        title: `${titlePrefix} ${pending.message}`,
-        body: pending.message,
-        priority: 'medium',
-        labels: [],
-      },
+      { title: `${titlePrefix} ${pending.message}`, body: pending.message, priority: 'medium', labels: [] },
       project,
       assignee?.githubUsername
     );
@@ -189,6 +213,7 @@ async function createIssueFromPending(ctx: any, pending: PendingIssue) {
     await repository.markCompleted(pending.dbId, issue.number, issue.url);
 
     let reply = `✅ <b>Issue #${issue.number}</b>\n\n`;
+    reply += `🏷️ ${typeLabel}\n`;
     reply += `📁 ${project.name}\n`;
     if (assignee) reply += `👤 ${assignee.name}\n`;
     reply += `📝 ${escapeHtml(pending.message)}\n`;
@@ -209,10 +234,6 @@ async function createIssueFromPending(ctx: any, pending: PendingIssue) {
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
-
-// =====================
-// GLOBAL ERROR HANDLER
-// =====================
 
 bot.catch((err) => {
   console.error('grammy hatası:', err);
