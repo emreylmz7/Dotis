@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import { config, dotisConfig } from './config.js';
 import * as repository from './db/repository.js';
 import { createIssue } from './services/github.js';
@@ -6,20 +6,31 @@ import type { CommandType } from './types/index.js';
 
 export const bot = new Bot(config.telegram.botToken);
 
+// Pending issue flows waiting for user selections
+interface PendingIssue {
+  message: string;
+  commandType: CommandType;
+  projectId?: string;
+  assigneeId?: string;
+  chatId: bigint;
+  senderUserId: bigint;
+  senderUsername: string | null;
+  telegramDate: Date;
+  messageId: number;
+  chatTitle: string | null;
+  dbId: string;
+}
+
+const pendingIssues = new Map<string, PendingIssue>();
+
 function isAllowedChat(chatId: bigint): boolean {
   return config.telegram.allowedChatIds.includes(chatId);
 }
 
-/**
- * /task ProjeAdı: mesaj @kişi
- * /bug ProjeAdı: mesaj @kişi
- * /istek ProjeAdı: mesaj @kişi
- *
- * Örnekler:
- *   /task HiTravelUI: Login hatası @emre
- *   /bug HiTravelCoApi: API timeout veriyor @ahmet
- *   /istek HiTravelUI: Dark mode eklensin @emre
- */
+// =====================
+// COMMANDS
+// =====================
+
 bot.command(['task', 'bug', 'istek'], async (ctx) => {
   const chatId = BigInt(ctx.chat.id);
   if (!isAllowedChat(chatId)) return;
@@ -27,62 +38,17 @@ bot.command(['task', 'bug', 'istek'], async (ctx) => {
   const raw = (ctx.match ?? '').trim();
   if (!raw) {
     await ctx.reply(
-      '⚠️ Kullanım:\n' +
-        '<code>/task ProjeAdı: mesaj @kişi</code>\n\n' +
-        '📋 Projeler: ' + dotisConfig.projects.map((p) => p.name).join(', ') + '\n' +
-        '👥 Ekip: ' + dotisConfig.teamMembers.map((m) => `@${m.telegramUsername}`).join(', '),
+      '⚠️ Kullanım:\n<code>/task mesajınız</code>\n<code>/bug mesajınız</code>\n<code>/istek mesajınız</code>\n\nÖrnek:\n<code>/task Login hatası düzeltilecek</code>',
       { parse_mode: 'HTML' }
     );
     return;
-  }
-
-  // Parse: "ProjeAdı: mesaj @kişi"
-  const parsed = parseTaskMessage(raw);
-  if (!parsed) {
-    await ctx.reply(
-      '⚠️ Format hatalı.\n\nDoğru kullanım:\n<code>/task ProjeAdı: mesaj @kişi</code>\n\nÖrnek:\n<code>/task HiTravelUI: Login hatası @emre</code>',
-      { parse_mode: 'HTML' }
-    );
-    return;
-  }
-
-  // Find project
-  const project = dotisConfig.projects.find(
-    (p) => p.name.toLowerCase() === parsed.projectName.toLowerCase() || p.id === parsed.projectName.toLowerCase()
-  );
-  if (!project) {
-    await ctx.reply(
-      `❌ Proje bulunamadı: <b>${escapeHtml(parsed.projectName)}</b>\n\n📋 Mevcut projeler: ${dotisConfig.projects.map((p) => p.name).join(', ')}`,
-      { parse_mode: 'HTML' }
-    );
-    return;
-  }
-
-  // Find assignee by Telegram username
-  let assignee = parsed.assigneeName
-    ? dotisConfig.teamMembers.find(
-        (m) => m.telegramUsername.toLowerCase() === parsed.assigneeName!.toLowerCase()
-      )
-    : undefined;
-
-  // Default to sender's Telegram username if no assignee specified
-  if (!assignee && ctx.from?.username) {
-    assignee = dotisConfig.teamMembers.find(
-      (m) => m.telegramUsername.toLowerCase() === ctx.from!.username!.toLowerCase()
-    );
   }
 
   // Determine command type
   const cmd = ctx.msg.text?.split(' ')[0] ?? '/task';
   let commandType: CommandType = 'bug';
-  let titlePrefix = '[Task]';
-  if (cmd === '/bug') {
-    commandType = 'bug';
-    titlePrefix = '[Hata]';
-  } else if (cmd === '/istek') {
-    commandType = 'feature';
-    titlePrefix = '[Özellik]';
-  }
+  if (cmd === '/bug') commandType = 'bug';
+  else if (cmd === '/istek') commandType = 'feature';
 
   // Save to DB
   const dbRecord = await repository.createMessage({
@@ -96,19 +62,123 @@ bot.command(['task', 'bug', 'istek'], async (ctx) => {
     telegramDate: new Date((ctx.message?.date ?? 0) * 1000),
   });
 
+  const pendingKey = dbRecord.id;
+  pendingIssues.set(pendingKey, {
+    message: raw,
+    commandType,
+    chatId,
+    senderUserId: BigInt(ctx.from?.id ?? 0),
+    senderUsername: ctx.from?.username ?? null,
+    telegramDate: new Date((ctx.message?.date ?? 0) * 1000),
+    messageId: ctx.message?.message_id ?? 0,
+    chatTitle: ctx.chat.title ?? null,
+    dbId: dbRecord.id,
+  });
+
+  // Show project selection
+  await sendProjectSelection(ctx, pendingKey, raw);
+});
+
+// =====================
+// CALLBACK HANDLERS
+// =====================
+
+bot.on('callback_query:data', async (ctx) => {
+  const data = ctx.callbackQuery.data;
+
+  if (data.startsWith('p:')) {
+    // Project selected → show assignee selection
+    const [, pendingKey, projectId] = data.split(':');
+    const pending = pendingIssues.get(pendingKey!);
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı, tekrar deneyin.' });
+      return;
+    }
+
+    pending.projectId = projectId;
+    await sendAssigneeSelection(ctx, pendingKey!);
+    await ctx.answerCallbackQuery();
+  } else if (data.startsWith('a:')) {
+    // Assignee selected → create issue
+    const [, pendingKey, assigneeId] = data.split(':');
+    const pending = pendingIssues.get(pendingKey!);
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı, tekrar deneyin.' });
+      return;
+    }
+
+    pending.assigneeId = assigneeId === 'none' ? undefined : assigneeId;
+    pendingIssues.delete(pendingKey!);
+
+    await createIssueFromPending(ctx, pending);
+    await ctx.answerCallbackQuery();
+  }
+});
+
+// =====================
+// UI BUILDERS
+// =====================
+
+async function sendProjectSelection(ctx: any, pendingKey: string, message: string) {
+  const keyboard = new InlineKeyboard();
+  dotisConfig.projects.forEach((p, i) => {
+    keyboard.text(p.name, `p:${pendingKey}:${p.id}`);
+    if (i % 2 === 1) keyboard.row();
+  });
+
+  const text = `📝 <b>${escapeHtml(message)}</b>\n\n📁 Proje seçin:`;
+  const opts: Record<string, unknown> = { parse_mode: 'HTML', reply_markup: keyboard };
+  if (ctx.message?.message_id) opts.reply_to_message_id = ctx.message.message_id;
+  await ctx.reply(text, opts as any);
+}
+
+async function sendAssigneeSelection(ctx: any, pendingKey: string) {
+  const pending = pendingIssues.get(pendingKey)!;
+  const project = dotisConfig.projects.find((p) => p.id === pending.projectId)!;
+
+  const keyboard = new InlineKeyboard();
+  dotisConfig.teamMembers.forEach((m, i) => {
+    keyboard.text(m.name, `a:${pendingKey}:${m.id}`);
+    if (i % 2 === 1) keyboard.row();
+  });
+  keyboard.row().text('Kimseyi Atama', `a:${pendingKey}:none`);
+
+  const text =
+    `📝 <b>${escapeHtml(pending.message)}</b>\n` +
+    `📁 ${project.name}\n\n` +
+    `👤 Kime atansın?`;
+
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard });
+}
+
+// =====================
+// ISSUE CREATION
+// =====================
+
+async function createIssueFromPending(ctx: any, pending: PendingIssue) {
+  const project = dotisConfig.projects.find((p) => p.id === pending.projectId)!;
+
+  const assignee = pending.assigneeId
+    ? dotisConfig.teamMembers.find((m) => m.id === pending.assigneeId)
+    : undefined;
+
+  let titlePrefix = '[Task]';
+  if (pending.commandType === 'bug') titlePrefix = '[Hata]';
+  else if (pending.commandType === 'feature') titlePrefix = '[Özellik]';
+
+  // Update DB
   const extra: Record<string, string> = { projectId: project.id, projectName: project.name };
   if (assignee) {
     extra.assigneeGithubUsername = assignee.githubUsername;
     extra.assigneeName = assignee.name;
   }
-  await repository.updateStatus(dbRecord.id, 'processing', extra as any);
+  await repository.updateStatus(pending.dbId, 'processing', extra as any);
 
-  // Create GitHub issue directly
   try {
     const issue = await createIssue(
       {
-        title: `${titlePrefix} ${parsed.message}`,
-        body: parsed.message,
+        title: `${titlePrefix} ${pending.message}`,
+        body: pending.message,
         priority: 'medium',
         labels: [],
       },
@@ -116,58 +186,25 @@ bot.command(['task', 'bug', 'istek'], async (ctx) => {
       assignee?.githubUsername
     );
 
-    await repository.markCompleted(dbRecord.id, issue.number, issue.url);
+    await repository.markCompleted(pending.dbId, issue.number, issue.url);
 
     let reply = `✅ <b>Issue #${issue.number}</b>\n\n`;
     reply += `📁 ${project.name}\n`;
     if (assignee) reply += `👤 ${assignee.name}\n`;
+    reply += `📝 ${escapeHtml(pending.message)}\n`;
     reply += `\n<a href="${issue.url}">GitHub'da Görüntüle</a>`;
 
-    const replyOpts: Record<string, unknown> = { parse_mode: 'HTML' };
-    if (ctx.message?.message_id) replyOpts.reply_to_message_id = ctx.message.message_id;
-    await ctx.reply(reply, replyOpts as any);
+    await ctx.editMessageText(reply, { parse_mode: 'HTML' });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    await repository.markFailed(dbRecord.id, errorMsg);
-    const errOpts: Record<string, unknown> = {};
-    if (ctx.message?.message_id) errOpts.reply_to_message_id = ctx.message.message_id;
-    await ctx.reply(`❌ Issue oluşturulamadı: ${errorMsg}`, errOpts as any);
+    await repository.markFailed(pending.dbId, errorMsg);
+    await ctx.editMessageText(`❌ Issue oluşturulamadı: ${errorMsg}`);
   }
-});
-
-// =====================
-// PARSER
-// =====================
-
-interface ParsedTask {
-  projectName: string;
-  message: string;
-  assigneeName: string | null;
 }
 
-function parseTaskMessage(raw: string): ParsedTask | null {
-  // Format: "ProjeAdı: mesaj @kişi"
-  const colonIndex = raw.indexOf(':');
-  if (colonIndex === -1) return null;
-
-  const projectName = raw.substring(0, colonIndex).trim();
-  if (!projectName) return null;
-
-  let rest = raw.substring(colonIndex + 1).trim();
-  if (!rest) return null;
-
-  // Extract @assignee from end
-  let assigneeName: string | null = null;
-  const atMatch = rest.match(/@(\w+)\s*$/);
-  if (atMatch) {
-    assigneeName = atMatch[1]!;
-    rest = rest.substring(0, atMatch.index!).trim();
-  }
-
-  if (!rest) return null;
-
-  return { projectName, message: rest, assigneeName };
-}
+// =====================
+// UTILS
+// =====================
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
