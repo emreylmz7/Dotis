@@ -156,9 +156,10 @@ bot.on('callback_query:data', async (ctx) => {
 
     let summary = `🏷️ ${typeLabel}\n📁 ${project.name}\n`;
     if (assignee) summary += `👤 ${assignee.name}\n`;
-    summary += `\n✏️ Şimdi issue mesajınızı yazın (veya /iptal):`;
+    summary += `\n✏️ Şimdi issue mesajınızı yazın:`;
 
-    await ctx.editMessageText(summary, { parse_mode: 'HTML' });
+    const cancelKeyboard = new InlineKeyboard().text('❌ İptal', `x:${pendingKey}`);
+    await ctx.editMessageText(summary, { parse_mode: 'HTML', reply_markup: cancelKeyboard });
     await ctx.answerCallbackQuery();
 
     // Wait for user's next text message
@@ -202,8 +203,8 @@ bot.on('message:text', async (ctx) => {
   const message = ctx.message.text.trim();
   if (!message) return;
 
-  // Cancel if user types /iptal
-  if (message === '/iptal') {
+  // Cancel if user types iptal, /iptal, or /iptal@botname
+  if (/^\/?iptal/i.test(message)) {
     pendingIssues.delete(pendingKey);
     await ctx.reply('🚫 İptal edildi.', { reply_to_message_id: ctx.message.message_id });
     return;
