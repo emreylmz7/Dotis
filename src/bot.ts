@@ -86,7 +86,7 @@ bot.on('callback_query:data', async (ctx) => {
     const pending = pendingIssues.get(pendingKey!);
     if (!pending) return void await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı.' });
 
-    pending.projectId = projectId;
+    pending.projectId = projectId!;
     const project = dotisConfig.projects.find((p) => p.id === projectId)!;
     const typeLabel = getTypeLabel(pending.commandType === 'feature' ? 'feature' : pending.commandType === 'bug' ? 'bug' : 'task');
 
@@ -109,10 +109,11 @@ bot.on('callback_query:data', async (ctx) => {
     const pending = pendingIssues.get(pendingKey!);
     if (!pending) return void await ctx.answerCallbackQuery({ text: '⚠️ Zaman aşımı.' });
 
-    pending.assigneeId = assigneeId === 'none' ? undefined : assigneeId;
+    pending.assigneeId = assigneeId === 'none' ? '' : assigneeId!;
 
     const project = dotisConfig.projects.find((p) => p.id === pending.projectId)!;
     const assignee = pending.assigneeId ? dotisConfig.teamMembers.find((m) => m.id === pending.assigneeId) : undefined;
+
     const typeLabel = getTypeLabel(pending.commandType === 'feature' ? 'feature' : pending.commandType === 'bug' ? 'bug' : 'task');
 
     let summary = `🏷️ ${typeLabel}\n📁 ${project.name}\n`;
