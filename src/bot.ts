@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, Keyboard } from 'grammy';
 import { config, dotisConfig } from './config.js';
 import * as repository from './db/repository.js';
 import { createIssue } from './services/github.js';
@@ -30,14 +30,28 @@ function isAllowedChat(chatId: bigint): boolean {
   return config.telegram.allowedChatIds.includes(chatId);
 }
 
+// Persistent reply keyboard
+const mainKeyboard = new Keyboard().text('📝 Yeni Issue').resized().persistent();
+
 // =====================
-// /yeni - Start issue creation flow
+// /start - Show persistent keyboard
 // =====================
 
-bot.command('yeni', async (ctx) => {
+bot.command('start', async (ctx) => {
   const chatId = BigInt(ctx.chat.id);
   if (!isAllowedChat(chatId)) return;
 
+  await ctx.reply(
+    '👋 <b>Dotis Bot</b> hazır!\n\nAşağıdaki butonu kullanarak issue oluşturabilirsiniz.',
+    { parse_mode: 'HTML', reply_markup: mainKeyboard }
+  );
+});
+
+// =====================
+// /yeni or "Yeni Issue" button - Start issue creation flow
+// =====================
+
+function startIssueFlow(ctx: any, chatId: bigint) {
   const pendingKey = `${ctx.from?.id}_${Date.now()}`;
   pendingIssues.set(pendingKey, {
     chatId,
@@ -45,8 +59,27 @@ bot.command('yeni', async (ctx) => {
     senderUsername: ctx.from?.username ?? null,
     chatTitle: ctx.chat.title ?? null,
   });
+  return pendingKey;
+}
 
-  // Step 1: Type selection
+bot.command('yeni', async (ctx) => {
+  const chatId = BigInt(ctx.chat.id);
+  if (!isAllowedChat(chatId)) return;
+
+  const pendingKey = startIssueFlow(ctx, chatId);
+  const keyboard = new InlineKeyboard()
+    .text('📋 Task', `t:${pendingKey}:task`)
+    .text('🐛 Bug', `t:${pendingKey}:bug`)
+    .text('💡 İstek', `t:${pendingKey}:feature`);
+
+  await ctx.reply('🏷️ Issue türünü seçin:', { reply_markup: keyboard });
+});
+
+bot.hears('📝 Yeni Issue', async (ctx) => {
+  const chatId = BigInt(ctx.chat.id);
+  if (!isAllowedChat(chatId)) return;
+
+  const pendingKey = startIssueFlow(ctx, chatId);
   const keyboard = new InlineKeyboard()
     .text('📋 Task', `t:${pendingKey}:task`)
     .text('🐛 Bug', `t:${pendingKey}:bug`)
